@@ -1,0 +1,19 @@
+"Phrases"
+{
+  // MAIN MENU
+  "current_map"
+  {
+    "en"  "Current Map"
+    "es"  "Mapa actual"
+  }
+  "online_players"
+  {
+    "en"  "Online Players"
+    "es"  "Jugadores Online"
+  }
+  "all_players"
+  {
+    "en"  "All Players"
+    "es"  "Total absoluto"
+  }
+}
