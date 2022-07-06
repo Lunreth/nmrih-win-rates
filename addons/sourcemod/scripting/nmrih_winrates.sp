@@ -5,16 +5,27 @@
 #include <dbi>
 #include <sdktools>
 #include <sdkhooks>
-#include <autoexecconfig>
 
 #define PLUGIN_AUTHOR "Ulreth*"
-#define PLUGIN_VERSION "1.0.1" // 17-12-2020
+#define PLUGIN_VERSION "1.0.4" // 6-07-2022
 #define PLUGIN_NAME "[NMRiH] WinRates"
 // CHANGELOG
-/* 17-12-2020
+/*
+17-12-2020
 - Increased limit for database storage (512 maps)
 - Added limit for menu display (100 maps only to avoid critical bug)
 - Fixed menu bug
+
+1.0.2
+- Fixed wrong NMS round lose condition check
+
+1.0.3
+- Fixed wrong syntax inside loading map rows
+- Improved CFG key detection (map extensions not needed anymore)
+
+1.0.4
+- Fixed map list disappearing at random times
+- Improved database connection method
 */
 // CVARS
 ConVar cvar_DatabaseName;
@@ -29,7 +40,7 @@ char g_MapName[48];
 char g_DatabaseName[32];
 char g_TableName[32];
 // PLUGIN MAIN BOOL
-bool g_PluginEnabled;
+bool g_PluginEnabled = true;
 // MENU TEXT FROM DATABASE
 char g_StringCurrentMapPlayer[10][64];
 char g_StringCurrentMapOnline[64];
@@ -56,15 +67,12 @@ public Plugin myinfo = {
 public void OnPluginStart()
 {
 	LoadTranslations("nmrih_winrates.phrases");
-	AutoExecConfig_SetFile("nmrih_winrates");
-	AutoExecConfig_SetCreateFile(true);
-	AutoExecConfig_CreateConVar("sm_nmrih_winrates_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NONE);
-	cvar_PluginEnabled = AutoExecConfig_CreateConVar("sm_nmrih_winrates_enabled", "1.0", "Enable or disable NMRiH Winrates for maps", FCVAR_NONE, true, 0.0, true, 1.0);
-	cvar_DebugEnabled = AutoExecConfig_CreateConVar("sm_nmrih_winrates_debug", "0.0", "Will spam messages in console and log about any SQL action", FCVAR_NONE, true, 0.0, true, 1.0);
-	cvar_DatabaseName = AutoExecConfig_CreateConVar("sm_nmrih_winrates_database", "nmrih_winrates", "Name of database keyvalue stored in sourcemod/configs/databases.cfg");
-	cvar_TableName = AutoExecConfig_CreateConVar("sm_nmrih_winrates_table", "winrates_table", "Name of table used by database previously defined");
-	AutoExecConfig_ExecuteFile();
-	AutoExecConfig_CleanFile();
+	CreateConVar("sm_nmrih_winrates_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NONE);
+	cvar_PluginEnabled = CreateConVar("sm_nmrih_winrates_enabled", "1.0", "Enable or disable NMRiH Winrates for maps", FCVAR_NONE, true, 0.0, true, 1.0);
+	cvar_DebugEnabled = CreateConVar("sm_nmrih_winrates_debug", "0.0", "Will spam messages in console and log about any SQL action", FCVAR_NONE, true, 0.0, true, 1.0);
+	cvar_DatabaseName = CreateConVar("sm_nmrih_winrates_database", "nmrih_winrates", "Name of database keyvalue stored in sourcemod/configs/databases.cfg");
+	cvar_TableName = CreateConVar("sm_nmrih_winrates_table", "winrates_table", "Name of table used by database previously defined");
+	AutoExecConfig(true, "nmrih_winrates");
 	//OnMapStart()
 	//OnConfigsExecuted()
 	HookEvent("nmrih_practice_ending", Event_PracticeStart);
@@ -76,9 +84,9 @@ public void OnPluginStart()
 	HookEvent("player_leave", Event_PlayerLeave);
 	//OnClientPostAdminCheck()
 	HookEvent("player_extracted", Event_PlayerExtracted);
-	HookEvent("extraction_complete", Event_ExtractionEnd);
-	HookEvent("state_change", Event_RoundWin);
-	HookEvent("extraction_expire", Event_ExtractionEnd);
+	//HookEvent("extraction_complete", Event_ExtractionEnd);
+	HookEvent("state_change", Event_StateChange);
+	//HookEvent("extraction_expire", Event_ExtractionEnd);
 	//RegConsoleCmd("changelevel_next", Event_ChangeLevel);
 	//RegConsoleCmd("changelevel", Event_ChangeLevel);
 	//OnMapEnd()
@@ -91,15 +99,17 @@ public void OnPluginStart()
 	RegAdminCmd("sm_erase_player_winrates", Command_DeletePlayer, ADMFLAG_ROOT);
 	RegAdminCmd("sm_delete_map_winrates", Command_DeleteMap, ADMFLAG_ROOT);
 	RegAdminCmd("sm_erase_map_winrates", Command_DeleteMap, ADMFLAG_ROOT);
+}
+
+public void OnMapStart()
+{
 	// ConVar Plugin Enabled
+	g_PluginEnabled = true;
 	if (GetConVarFloat(cvar_PluginEnabled) == 0.0)
 	{
 		g_PluginEnabled = false;
 	}
-	else
-	{
-		g_PluginEnabled = true;
-	}
+	
 	// Database connection
 	if (g_PluginEnabled == false) return;
 	cvar_DatabaseName.GetString(g_DatabaseName, sizeof(g_DatabaseName));
@@ -125,17 +135,36 @@ public void T_Connect(Database db, const char[] error, any data)
 public void OnConfigsExecuted()
 {
 	if (g_PluginEnabled == false) return;
+	
 	GetCurrentMap(g_MapName, sizeof(g_MapName));
+	
 	// Disable plugin for certain maps using KeyValues CFG
-	hConfig = new KeyValues("winrates_exclude");
+	KeyValues hConfig = new KeyValues("winrates_exclude");
 	char path[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, path, sizeof(path), "configs/winrates_exclude.cfg");
 	hConfig.ImportFromFile(path);
-	if (!hConfig.JumpToKey("maps_disabled", false)) SetFailState("[WinRates] Could not load excluded maps.");
-	if (hConfig.JumpToKey(g_MapName, false))
+	
+	// Jump into the first subsection
+	if (!hConfig.GotoFirstSubKey())
 	{
-		g_PluginEnabled = false;
+		PrintToServer("[NMRiH] Invalid CFG file, check full example at plugin download page");
+		LogMessage("[NMRiH] Invalid CFG file, check full example at plugin download page");
 	}
+	
+	// Iterate over subsections at the same nesting level
+	char buffer[255];
+	do
+	{
+		hConfig.GetSectionName(buffer, sizeof(buffer));
+		if (StrContains(g_MapName, buffer, false) != -1)
+		{
+			g_PluginEnabled = false;
+			PrintToServer("[WINRATES] Map excluded from winrates");
+			LogMessage("[WINRATES] Map excluded from winrates");
+			break;
+		}
+	} while(hConfig.GotoNextKey());
+	
 	delete hConfig;
 }
 
@@ -338,6 +367,12 @@ public void T_LoadMapData(Database db, DBResultSet results, const char[] error, 
 		LogError("T_LoadMapData returned error: %s", error);
 		return;
 	}
+	if (!results.FetchRow())
+	{
+		LogError("T_LoadMapData error found inside !results.FetchRow() method");
+		return;
+	}
+	
 	// Play count should be higher than 0
 	if(results.IsFieldNull(1))
     {
@@ -380,6 +415,11 @@ public void T_LoadMapDataOnline(Database db, DBResultSet results, const char[] e
 	if(db == null || results == null)
 	{
 		LogError("T_LoadMapDataOnline returned error: %s", error);
+		return;
+	}
+	if (!results.FetchRow())
+	{
+		LogError("T_LoadMapDataOnline error found inside !results.FetchRow() method");
 		return;
 	}
 	if(results.IsFieldNull(1))
@@ -700,37 +740,58 @@ public Action Event_PlayerExtracted(Event event, const char[] name, bool dontBro
 	return Plugin_Continue;
 }
 
-public void Event_RoundWin(Event event, const char[] name, bool dontBroadcast)
+public void Event_StateChange(Event event, const char[] name, bool dontBroadcast)
 {
+	//net_showevents 2 + developer 2
 	if (g_PluginEnabled == false) return;
-	int obj_state = GetEventInt(event, "state");
-	// CHECK WIN CONDITION
-	// 2 = Pre-round
-	// 3 = Round in progress - Wave in progress
-	// 5 = Round won (All players extracted) = Event MAP COMPLETE
-	// 6 = Round lost
-	if (obj_state != 5)
+	int obj_state = GetEventInt(event, "state"); // Different values for each game type
+	int game_type = GetEventInt(event, "game_type"); // 0 = NMO | 1 = NMS
+	/*
+	[SHARED VALUES]
+	Practice round = 1
+	Round start = 2
+	Round running = 3
+	
+	[NMS game_type 1]
+	¿Map win = 4?
+	Round lost = 5
+	Restart = 6
+	
+	[NMO game_type 0]
+	Map win = 5
+	Round lost = 6
+	Restart = 7
+	*/
+	if (obj_state == 5)
 	{
-		return;
-	}
-	// ALIVE PLAYERS WIN
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (g_MapClear[i] == false)
+		// Round lost
+		if (game_type == 1)
 		{
-			if (IsClientInGame(i))
+			AlivePlayersLose();
+		}
+		// Map win
+		if (game_type == 0)
+		{
+			// ALIVE PLAYERS WIN
+			for (int i = 1; i <= MaxClients; i++)
 			{
-				if (IsPlayerAlive(i))
+				if (g_MapClear[i] == false)
 				{
-					g_MapClear[i] = true;
-					GetClientAuthId(i, AuthId_Steam2, g_SteamID[i], sizeof(g_SteamID[]));
-					if (GetConVarFloat(cvar_DebugEnabled) == 1.0)	LogMessage("[SQL WinRate] %s is alive and reached extraction.", g_PlayerName[i]);
-					if (GetConVarFloat(cvar_DebugEnabled) == 1.0)	PrintToServer("[SQL WinRate] %s is alive and reached extraction.", g_PlayerName[i]);
-					char query[512];
-					char escape_steam_id[72];
-					g_Database.Escape(g_SteamID[i], escape_steam_id, sizeof(escape_steam_id));
-					Format(query, sizeof(query), "UPDATE %s SET play_count = play_count+1, clear_count = clear_count+1, clear_rate = (CAST(clear_count AS REAL)/CAST(play_count+1 AS REAL))*100 WHERE steam_id = '%s' AND map_name = '%s';", g_TableName, escape_steam_id, g_MapName);
-					g_Database.Query(T_Generic, query);
+					if (IsClientInGame(i))
+					{
+						if (IsPlayerAlive(i))
+						{
+							g_MapClear[i] = true;
+							GetClientAuthId(i, AuthId_Steam2, g_SteamID[i], sizeof(g_SteamID[]));
+							if (GetConVarFloat(cvar_DebugEnabled) == 1.0)	LogMessage("[SQL WinRate] %s is alive and reached extraction.", g_PlayerName[i]);
+							if (GetConVarFloat(cvar_DebugEnabled) == 1.0)	PrintToServer("[SQL WinRate] %s is alive and reached extraction.", g_PlayerName[i]);
+							char query[512];
+							char escape_steam_id[72];
+							g_Database.Escape(g_SteamID[i], escape_steam_id, sizeof(escape_steam_id));
+							Format(query, sizeof(query), "UPDATE %s SET play_count = play_count+1, clear_count = clear_count+1, clear_rate = (CAST(clear_count AS REAL)/CAST(play_count+1 AS REAL))*100 WHERE steam_id = '%s' AND map_name = '%s';", g_TableName, escape_steam_id, g_MapName);
+							g_Database.Query(T_Generic, query);
+						}
+					}
 				}
 			}
 		}
