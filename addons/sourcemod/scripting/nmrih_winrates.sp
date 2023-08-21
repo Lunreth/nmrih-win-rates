@@ -90,9 +90,9 @@ public void OnPluginStart()
 	//RegConsoleCmd("changelevel_next", Event_ChangeLevel);
 	//RegConsoleCmd("changelevel", Event_ChangeLevel);
 	//OnMapEnd()
-	RegConsoleCmd("winrate", Menu_Main);
-	RegConsoleCmd("winrates", Menu_Main);
-	RegConsoleCmd("wr", Menu_Main);
+	RegConsoleCmd("sm_winrate", Menu_Main);
+	RegConsoleCmd("sm_winrates", Menu_Main);
+	RegConsoleCmd("sm_wr", Menu_Main);
 	RegAdminCmd("sm_delete_winrates", Command_DeleteTable, ADMFLAG_ROOT);
 	RegAdminCmd("sm_erase_winrates", Command_DeleteTable, ADMFLAG_ROOT);
 	RegAdminCmd("sm_delete_player_winrates", Command_DeletePlayer, ADMFLAG_ROOT);
